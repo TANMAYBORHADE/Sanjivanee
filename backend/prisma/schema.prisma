@@ -1,13 +1,139 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// backend/prisma/schema.prisma
+// Sanjeevani — Ayurvedic Herb Traceability
+// Postgres schema: source of truth for querying, mirrors on-chain events for fast reads
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+// ---------- Actors ----------
+
+enum Role {
+  FARMER
+  AGGREGATOR
+  PROCESSOR
+  LAB
+  MANUFACTURER
+  DISTRIBUTOR
+  ADMIN
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  role          Role
+  walletAddress String   @unique // links off-chain identity to on-chain actor
+  phone         String?
+  orgName       String?
+  region        String?  // for farmers/aggregators: operating region
+  isVerified    Boolean  @default(false) // admin-approved before they can write events
+  createdAt     DateTime @default(now())
+
+  batchesCollected Batch[]        @relation("FarmerBatches")
+  events           BatchEvent[]
+  labCertificates  LabCertificate[]
+
+  @@index([role])
+}
+
+// ---------- Core batch lifecycle ----------
+
+enum BatchStage {
+  COLLECTED
+  AGGREGATED
+  PROCESSED
+  LAB_TESTED
+  MANUFACTURED
+  PACKAGED
+  DISTRIBUTED
+}
+
+model Batch {
+  id             String   @id @default(cuid())
+  batchCode      String   @unique // human-readable + QR payload, e.g. SNJ-ASHW-2026-0001
+  herbSpecies    String   // e.g. "Withania somnifera (Ashwagandha)"
+  quantityKg     Float
+  collectionLat  Float
+  collectionLng  Float
+  collectionDate DateTime
+  harvestSeason  String?  // e.g. "post-monsoon" — relevant for seasonal restriction checks
+  farmerId       String
+  farmer         User     @relation("FarmerBatches", fields: [farmerId], references: [id])
+
+  status         BatchStage @default(COLLECTED)
+  onChainId      String?    // token/batch id returned by the smart contract
+  creationTxHash String?    // tx hash of the on-chain mint
+
+  events   BatchEvent[]
+  products ProductBatch[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([herbSpecies])
+  @@index([status])
+}
+
+// Every lifecycle transition (processing, testing, packaging, etc.) is one event
+model BatchEvent {
+  id        String     @id @default(cuid())
+  batchId   String
+  batch     Batch      @relation(fields: [batchId], references: [id])
+  stage     BatchStage
+  actorId   String
+  actor     User       @relation(fields: [actorId], references: [id])
+
+  notes       String?
+  ipfsCid     String?   // pointer to supporting file (photo, processing log, etc.)
+  txHash      String?   // on-chain event tx hash, once confirmed
+  latitude    Float?
+  longitude   Float?
+  occurredAt  DateTime  @default(now())
+
+  labCertificate LabCertificate?
+
+  @@index([batchId])
+  @@index([stage])
+}
+
+// Lab test results attached to a LAB_TESTED event
+model LabCertificate {
+  id            String     @id @default(cuid())
+  eventId       String     @unique
+  event         BatchEvent @relation(fields: [eventId], references: [id])
+  labId         String
+  lab           User       @relation(fields: [labId], references: [id])
+
+  reportIpfsCid String   // the actual PDF/report, pinned to IPFS
+  reportHash    String   // sha256 of the report, also stored on-chain for verification
+  result        String   // e.g. "PASS", "FAIL", or structured JSON summary
+  testedFor     String[] // e.g. ["heavy metals", "pesticide residue", "microbial load"]
+  issuedAt      DateTime @default(now())
+}
+
+// ---------- Consumer-facing product ----------
+
+model Product {
+  id        String   @id @default(cuid())
+  sku       String   @unique
+  name      String
+  brand     String?
+  qrCode    String   @unique // encodes a lookup URL, e.g. /verify/{qrCode}
+  createdAt DateTime @default(now())
+
+  batches ProductBatch[]
+}
+
+// A product can combine multiple herb batches; a batch can feed multiple products
+model ProductBatch {
+  productId String
+  batchId   String
+  product   Product @relation(fields: [productId], references: [id])
+  batch     Batch   @relation(fields: [batchId], references: [id])
+
+  @@id([productId, batchId])
 }
