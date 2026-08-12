@@ -5,13 +5,13 @@ const { prisma } = require("./prisma/client");
 const app = express();
 app.use(express.json());
 
-// Create a new batch (for now, farmer is looked up by wallet address)
+// Create a new batch
 app.post("/batches", async (req, res) => {
   try {
-    const { batchCode, herbSpecies, quantityKg, collectionLat, collectionLng, farmerWalletAddress } = req.body;
+    const { batchCode, herbSpecies, quantityKg, collectionLat, collectionLng, farmerEmail } = req.body;
 
     const farmer = await prisma.user.findUnique({
-      where: { walletAddress: farmerWalletAddress },
+      where: { email: farmerEmail },
     });
     if (!farmer) return res.status(404).json({ error: "Farmer not found" });
 

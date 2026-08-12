@@ -23,15 +23,16 @@ enum Role {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  name          String
-  role          Role
-  walletAddress String   @unique // links off-chain identity to on-chain actor
-  phone         String?
-  orgName       String?
-  region        String?  // for farmers/aggregators: operating region
-  isVerified    Boolean  @default(false) // admin-approved before they can write events
-  createdAt     DateTime @default(now())
+  id           String   @id @default(cuid())
+  name         String
+  role         Role
+  email        String   @unique
+  passwordHash String
+  phone        String?
+  orgName      String?
+  region       String?  // for farmers/aggregators: operating region
+  isVerified   Boolean  @default(false) // admin-approved before they can write events
+  createdAt    DateTime @default(now())
 
   batchesCollected Batch[]        @relation("FarmerBatches")
   events           BatchEvent[]
@@ -39,7 +40,6 @@ model User {
 
   @@index([role])
 }
-
 // ---------- Core batch lifecycle ----------
 
 enum BatchStage {

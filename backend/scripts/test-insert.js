@@ -5,7 +5,8 @@ async function main() {
     data: {
       name: "Ramesh Patil",
       role: "FARMER",
-      walletAddress: "0x1234567890123456789012345678901234567890",
+      email: "ramesh.patil@example.com",
+      passwordHash: "temp-placeholder-hash", // real hashing comes in Phase 4 (auth)
       region: "Nashik, Maharashtra",
     },
   });
