@@ -56,26 +56,32 @@ describe("HerbBatch", function () {
     ).to.be.revertedWithCustomError(herbBatch, "OwnableUnauthorizedAccount");
   });
 
-  it("appends a new stage to an existing batch's history", async function () {
+  it("appends a new stage to an existing batch's history and emits StageAdded", async function () {
     const { herbBatch } = await deployFixture();
+    const dataHash2 = hre.ethers.id("data2");
 
     await (await herbBatch.createBatch(
       "SNJ-ASHW-2026-TEST", "Ashwagandha", "farmer-123",
       0, 0, Math.floor(Date.now() / 1000), "cid1", hre.ethers.id("data1")
     )).wait();
 
-    await (await herbBatch.addEvent(
-      0,               // batchId
-      2,               // Stage.Processed (index 2 in the enum)
-      "processor-456", // actorId
-      "cid2",
-      hre.ethers.id("data2")
-    )).wait();
+    await expect(
+      herbBatch.addEvent(
+        0,               // batchId
+        2,               // Stage.Processed (index 2 in the enum)
+        "processor-456", // actorId
+        "cid2",
+        dataHash2
+      )
+    )
+      .to.emit(herbBatch, "StageAdded")
+      .withArgs(0, 2, "processor-456", "cid2", dataHash2);
 
     const history = await herbBatch.getBatchHistory(0);
     expect(history.length).to.equal(2);
     expect(history[1].stage).to.equal(2n); // Stage.Processed
     expect(history[1].actorId).to.equal("processor-456");
+    expect(history[1].dataHash).to.equal(dataHash2);
   });
 
   it("rejects addEvent on a batch that doesn't exist", async function () {

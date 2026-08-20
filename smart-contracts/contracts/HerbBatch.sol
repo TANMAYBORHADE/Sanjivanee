@@ -52,7 +52,7 @@ contract HerbBatch is Ownable {
     uint256 public nextBatchId;
 
     event BatchCreated(uint256 indexed batchId, string batchCode, string farmerId);
-    event StageAdded(uint256 indexed batchId, Stage stage, string actorId, string ipfsCid);
+    event StageAdded(uint256 indexed batchId, Stage stage, string actorId, string ipfsCid, bytes32 dataHash);
 
     constructor(address backendWallet) Ownable(backendWallet) {}
 
@@ -91,7 +91,7 @@ contract HerbBatch is Ownable {
         }));
 
         emit BatchCreated(batchId, batchCode, farmerId);
-        emit StageAdded(batchId, Stage.Collected, farmerId, ipfsCid);
+        emit StageAdded(batchId, Stage.Collected, farmerId, ipfsCid, dataHash);
         return batchId;
     }
 
@@ -115,7 +115,7 @@ contract HerbBatch is Ownable {
             timestamp: block.timestamp
         }));
 
-        emit StageAdded(batchId, stage, actorId, ipfsCid);
+        emit StageAdded(batchId, stage, actorId, ipfsCid, dataHash);
     }
 
     function getBatchHistory(uint256 batchId) external view returns (BatchEvent[] memory) {

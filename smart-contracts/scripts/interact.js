@@ -20,8 +20,27 @@ async function main() {
   const receipt = await tx.wait();
   console.log("Batch created! Tx hash:", receipt.hash);
 
-  // batchId is 0 since it's the first batch ever created on this contract
-  const history = await herbBatch.getBatchHistory(0);
+  // Extract the actual batchId from the BatchCreated event in transaction receipt logs
+  let batchId;
+  for (const log of receipt.logs) {
+    try {
+      const parsedLog = herbBatch.interface.parseLog(log);
+      if (parsedLog && parsedLog.name === "BatchCreated") {
+        batchId = parsedLog.args.batchId;
+        break;
+      }
+    } catch {
+      // Ignore unparsed logs or logs from external contracts
+    }
+  }
+
+  if (batchId === undefined) {
+    throw new Error("BatchCreated event not found in receipt logs");
+  }
+
+  console.log(`Retrieved on-chain batchId: ${batchId}`);
+
+  const history = await herbBatch.getBatchHistory(batchId);
   console.log("Batch history:", history);
 }
 
