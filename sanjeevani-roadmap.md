@@ -8,11 +8,11 @@ Rule for every phase: **don't move to the next one until the current one is actu
 
 ## Phase 1 — Database & API foundation
 
-- [x] Design `schema.prisma` (User, Batch, BatchEvent, LabCertificate, Product, ProductBatch)
-- [x] Set up local Postgres, get `prisma migrate dev` working
-- [x] Convert everything to plain JS (`prisma.config.js`, `client.js`)
-- [x] `client.js` — Prisma Client wired via `@prisma/adapter-pg`
-- [x] `server.js` — Express app, `POST /batches` tested (201 Created)
+- [ ] Design `schema.prisma` (User, Batch, BatchEvent, LabCertificate, Product, ProductBatch)
+- [ ] Set up local Postgres, get `prisma migrate dev` working
+- [ ] Convert everything to plain JS (`prisma.config.js`, `client.js`)
+- [ ] `client.js` — Prisma Client wired via `@prisma/adapter-pg`
+- [ ] `server.js` — Express app, `POST /batches` tested (201 Created)
 - [ ] `GET /batches/:id` — tested, returns batch + events + farmer
 - [ ] `GET /batches` — list/search batches (basic pagination)
 - [ ] `POST /users` — register a new actor (farmer, lab, etc.)
@@ -24,7 +24,7 @@ Rule for every phase: **don't move to the next one until the current one is actu
 
 ## Phase 2 — Smart contract (standalone)
 
-- [x] Write `HerbBatch.sol` (role-gated batch creation + stage events)
+- [ ] Write `HerbBatch.sol` (role-gated batch creation + stage events)
 - [ ] Set up Hardhat properly in `smart-contracts/`, confirm `npx hardhat compile` works
 - [ ] Install OpenZeppelin (`@openzeppelin/contracts`)
 - [ ] Write `scripts/deploy.js` — deploys to Hardhat's local in-memory blockchain
