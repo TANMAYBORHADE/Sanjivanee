@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const { ethers } = require("ethers");
 const { prisma } = require("./prisma/client");
-const { createBatchOnChain } = require("./src/blockchain/contract");
+const { createBatchOnChain, addEventOnChain } = require("./src/blockchain/contract");
 
 // Fail loudly at startup if required config is missing, instead of a
 // confusing crash the first time some route actually needs it
@@ -39,7 +39,19 @@ async function withRetry(fn, { retries = 2, delayMs = 1000 } = {}) {
   throw lastError;
 }
 
-// Create a new batch — writes to Postgres AND records it on-chain
+// Maps Prisma's BatchStage enum names to the numeric index HerbBatch.sol's
+// Stage enum expects (Solidity enums are just numbers under the hood, in
+// the exact order they're declared: Collected=0, Aggregated=1, ...)
+const STAGE_TO_CHAIN_INDEX = {
+  COLLECTED: 0,
+  AGGREGATED: 1,
+  PROCESSED: 2,
+  LAB_TESTED: 3,
+  MANUFACTURED: 4,
+  PACKAGED: 5,
+  DISTRIBUTED: 6,
+};
+
 app.post("/batches", async (req, res) => {
   try {
     const { batchCode, herbSpecies, quantityKg, collectionLat, collectionLng, farmerEmail } = req.body;
@@ -51,7 +63,6 @@ app.post("/batches", async (req, res) => {
       return res.status(400).json({ error: "A valid registered farmer is required" });
     }
 
-    // 1. Write to Postgres first — this is our source of truth for querying
     const batch = await prisma.batch.create({
       data: {
         batchCode,
@@ -82,8 +93,8 @@ app.post("/batches", async (req, res) => {
       );
     } catch (chainErr) {
       // The Postgres row already exists at this point but the chain write
-      // failed — see the explanation below about what this "half-written"
-      // state means and why we're not treating it as a hard failure.
+      // failed even after retries. We keep the DB row (source of truth) and
+      // flag it rather than rejecting the whole request.
       console.error("On-chain write failed:", chainErr);
       return res.status(201).json({
         ...batch,
@@ -108,6 +119,80 @@ app.post("/batches", async (req, res) => {
     }
     if (err.code === "P2025") {
       return res.status(404).json({ error: "Batch record not found during update" });
+    }
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+// Append a lifecycle event to an existing batch (processed, tested, etc.)
+// — writes to Postgres AND records it on-chain, same pattern as POST /batches
+app.post("/batches/:id/events", async (req, res) => {
+  try {
+    const { stage, actorEmail, notes, latitude, longitude } = req.body;
+
+    if (!(stage in STAGE_TO_CHAIN_INDEX)) {
+      return res.status(400).json({ error: `Invalid stage. Must be one of: ${Object.keys(STAGE_TO_CHAIN_INDEX).join(", ")}` });
+    }
+
+    const batch = await prisma.batch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ error: "Batch not found" });
+    if (batch.onChainId === null) {
+      // Can't append an on-chain event to a batch that was never confirmed on-chain
+      return res.status(400).json({ error: "Batch has no on-chain record yet — cannot add an event" });
+    }
+
+    const actor = await prisma.user.findUnique({ where: { email: actorEmail } });
+    if (!actor) return res.status(400).json({ error: "A valid registered actor is required" });
+
+    // 1. Write to Postgres first
+    const event = await prisma.batchEvent.create({
+      data: {
+        batchId: batch.id,
+        stage,
+        actorId: actor.id,
+        notes,
+        latitude,
+        longitude,
+      },
+    });
+
+    // 2. Record it on-chain, using the batch's on-chain ID (not its Postgres id)
+    let onChainResult;
+    try {
+      onChainResult = await withRetry(() =>
+        addEventOnChain({
+          onChainId: batch.onChainId,
+          stage: STAGE_TO_CHAIN_INDEX[stage],
+          actorId: actor.id,
+          ipfsCid: "", // real IPFS upload comes in Phase 5
+          dataHash: ethers.ZeroHash,
+        })
+      );
+    } catch (chainErr) {
+      console.error("On-chain event write failed:", chainErr);
+      return res.status(201).json({
+        ...event,
+        warning: "Saved to database, but blockchain recording failed. Will need manual sync.",
+      });
+    }
+
+    // 3. Save the tx hash back onto the event, and update the batch's overall status
+    const [updatedEvent] = await prisma.$transaction([
+      prisma.batchEvent.update({
+        where: { id: event.id },
+        data: { txHash: onChainResult.txHash },
+      }),
+      prisma.batch.update({
+        where: { id: batch.id },
+        data: { status: stage },
+      }),
+    ]);
+
+    res.status(201).json(updatedEvent);
+  } catch (err) {
+    console.error(err);
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Record not found during update" });
     }
     res.status(500).json({ error: "Something went wrong" });
   }
