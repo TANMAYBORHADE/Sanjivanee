@@ -156,31 +156,33 @@ app.post("/batches/:id/events", async (req, res) => {
       },
     });
 
-    // 2. Record it on-chain, using the batch's on-chain ID (not its Postgres id)
-    let onChainResult;
+    // 2. Try the on-chain write — don't return early on failure, since the
+    // event genuinely happened regardless of whether the chain confirms it.
+    // event.txHash staying null IS our "pending chain sync" signal, so we
+    // don't need a separate status field for this.
+    let onChainResult = null;
+    let chainWarning = null;
     try {
       onChainResult = await withRetry(() =>
         addEventOnChain({
           onChainId: batch.onChainId,
           stage: STAGE_TO_CHAIN_INDEX[stage],
           actorId: actor.id,
-          ipfsCid: "", // real IPFS upload comes in Phase 5
+          ipfsCid: "",
           dataHash: ethers.ZeroHash,
         })
       );
     } catch (chainErr) {
       console.error("On-chain event write failed:", chainErr);
-      return res.status(201).json({
-        ...event,
-        warning: "Saved to database, but blockchain recording failed. Will need manual sync.",
-      });
+      chainWarning = "Saved to database, but blockchain recording failed. Event's txHash remains null until manually synced.";
     }
 
-    // 3. Save the tx hash back onto the event, and update the batch's overall status
+    // 3. batch.status ALWAYS reflects what really happened, regardless of
+    // chain-write success. txHash is only set if the chain call succeeded.
     const [updatedEvent] = await prisma.$transaction([
       prisma.batchEvent.update({
         where: { id: event.id },
-        data: { txHash: onChainResult.txHash },
+        data: onChainResult ? { txHash: onChainResult.txHash } : {},
       }),
       prisma.batch.update({
         where: { id: batch.id },
@@ -188,7 +190,8 @@ app.post("/batches/:id/events", async (req, res) => {
       }),
     ]);
 
-    res.status(201).json(updatedEvent);
+    const responseBody = chainWarning ? { ...updatedEvent, warning: chainWarning } : updatedEvent;
+    res.status(201).json(responseBody);
   } catch (err) {
     console.error(err);
     if (err.code === "P2025") {
@@ -228,5 +231,5 @@ app.get("/batches/:id", async (req, res) => {
   }
 });
 
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
