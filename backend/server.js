@@ -2,6 +2,7 @@ require("dotenv/config");
 const express = require("express");
 const cors = require("cors");
 const { ethers } = require("ethers");
+const bcrypt = require("bcryptjs");
 const { prisma } = require("./prisma/client");
 const { createBatchOnChain, addEventOnChain } = require("./src/blockchain/contract");
 
@@ -51,6 +52,51 @@ const STAGE_TO_CHAIN_INDEX = {
   PACKAGED: 5,
   DISTRIBUTED: 6,
 };
+
+// ---------- User Routes ----------
+
+const VALID_ROLES = ["FARMER", "AGGREGATOR", "PROCESSOR", "LAB", "MANUFACTURER", "DISTRIBUTOR", "ADMIN"];
+
+app.post("/users", async (req, res) => {
+  try {
+    const { name, email, password, role, phone, orgName, region } = req.body;
+
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ error: "name, email, password, and role are required" });
+    }
+    if (!VALID_ROLES.includes(role)) {
+      return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(", ")}` });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: "password must be at least 8 characters" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: { name, email, role, phone, orgName, region, passwordHash },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        phone: true,
+        orgName: true,
+        region: true,
+        isVerified: true,
+        createdAt: true,
+      },
+    });
+
+    res.status(201).json(user);
+  } catch (err) {
+    console.error(err);
+    if (err.code === "P2002") return res.status(409).json({ error: "Email already registered" });
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+// ---------- Batch Routes ----------
 
 app.post("/batches", async (req, res) => {
   try {
@@ -202,6 +248,38 @@ app.post("/batches/:id/events", async (req, res) => {
 });
 
 // Fetch a batch with its full event history (excluding sensitive fields like passwordHash)
+app.get("/batches", async (req, res) => {
+  try {
+    const { herbSpecies, status, page = "1", limit = "20" } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+
+    const where = {
+      ...(herbSpecies && { herbSpecies: { contains: herbSpecies, mode: "insensitive" } }),
+      ...(status && { status }),
+    };
+
+    const [batches, total] = await prisma.$transaction([
+      prisma.batch.findMany({
+        where,
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+        orderBy: { createdAt: "desc" },
+        include: { farmer: { select: { id: true, name: true, region: true } } },
+      }),
+      prisma.batch.count({ where }),
+    ]);
+
+    res.json({
+      batches,
+      pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
 app.get("/batches/:id", async (req, res) => {
   try {
     const batch = await prisma.batch.findUnique({
