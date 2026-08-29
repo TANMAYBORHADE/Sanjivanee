@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const { ethers } = require("ethers");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const { prisma } = require("./prisma/client");
 const { createBatchOnChain, addEventOnChain } = require("./src/blockchain/contract");
 
@@ -38,6 +39,31 @@ async function withRetry(fn, { retries = 2, delayMs = 1000 } = {}) {
     }
   }
   throw lastError;
+}
+
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization; // expects "Bearer <token>"
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "No token provided" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = payload; // now every route below has access to req.user.userId and req.user.role
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
+function requireRole(...allowedRoles) {
+  return (req, res, next) => {
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: `This action requires one of these roles: ${allowedRoles.join(", ")}` });
+    }
+    next();
+  };
 }
 
 // Maps Prisma's BatchStage enum names to the numeric index HerbBatch.sol's
@@ -92,6 +118,37 @@ app.post("/users", async (req, res) => {
   } catch (err) {
     console.error(err);
     if (err.code === "P2002") return res.status(409).json({ error: "Email already registered" });
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "email and password are required" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    // Deliberately vague error for both "no such user" and "wrong password" —
+    // telling an attacker WHICH one was wrong helps them guess valid emails
+    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    const token = jwt.sign(
+      { userId: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      token,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Something went wrong" });
   }
 });
