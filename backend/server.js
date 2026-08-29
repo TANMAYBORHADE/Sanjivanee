@@ -81,7 +81,7 @@ const STAGE_TO_CHAIN_INDEX = {
 
 // ---------- User Routes ----------
 
-const VALID_ROLES = ["FARMER", "AGGREGATOR", "PROCESSOR", "LAB", "MANUFACTURER", "DISTRIBUTOR", "ADMIN"];
+const SELF_REGISTERABLE_ROLES = ["FARMER", "AGGREGATOR", "PROCESSOR", "LAB", "MANUFACTURER", "DISTRIBUTOR"];
 
 app.post("/users", async (req, res) => {
   try {
@@ -90,8 +90,8 @@ app.post("/users", async (req, res) => {
     if (!name || !email || !password || !role) {
       return res.status(400).json({ error: "name, email, password, and role are required" });
     }
-    if (!VALID_ROLES.includes(role)) {
-      return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(", ")}` });
+    if (!SELF_REGISTERABLE_ROLES.includes(role)) {
+      return res.status(400).json({ error: `role must be one of: ${SELF_REGISTERABLE_ROLES.join(", ")}` });
     }
     if (password.length < 8) {
       return res.status(400).json({ error: "password must be at least 8 characters" });
@@ -153,26 +153,73 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
+// Admin approves a user (farmer, lab, processor, etc.)
+app.patch("/users/:id/verify", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { isVerified: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isVerified: true,
+      },
+    });
+    res.json(updatedUser);
+  } catch (err) {
+    console.error(err);
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
 // ---------- Batch Routes ----------
 
-app.post("/batches", async (req, res) => {
+app.post("/batches", requireAuth, requireRole("FARMER"), async (req, res) => {
   try {
-    const { batchCode, herbSpecies, quantityKg, collectionLat, collectionLng, farmerEmail } = req.body;
+    const { batchCode, herbSpecies, quantityKg, collectionLat, collectionLng } = req.body;
 
+    if (!batchCode || !herbSpecies || quantityKg == null || collectionLat == null || collectionLng == null) {
+      return res.status(400).json({
+        error: "batchCode, herbSpecies, quantityKg, collectionLat, and collectionLng are required",
+      });
+    }
+
+    const parsedQuantity = parseFloat(quantityKg);
+    const parsedLat = parseFloat(collectionLat);
+    const parsedLng = parseFloat(collectionLng);
+
+    if (isNaN(parsedQuantity) || isNaN(parsedLat) || isNaN(parsedLng)) {
+      return res.status(400).json({
+        error: "quantityKg, collectionLat, and collectionLng must be valid numbers",
+      });
+    }
+
+    // farmer identity comes from the verified JWT now, not the request body
     const farmer = await prisma.user.findUnique({
-      where: { email: farmerEmail },
+      where: { id: req.user.userId },
+      select: { id: true, isVerified: true },
     });
-    if (!farmer || farmer.role !== "FARMER") {
-      return res.status(400).json({ error: "A valid registered farmer is required" });
+
+    if (!farmer) {
+      return res.status(401).json({ error: "User no longer exists" });
+    }
+
+    if (!farmer.isVerified) {
+      return res.status(403).json({ error: "Farmer account is pending admin verification" });
     }
 
     const batch = await prisma.batch.create({
       data: {
         batchCode,
         herbSpecies,
-        quantityKg,
-        collectionLat,
-        collectionLng,
+        quantityKg: parsedQuantity,
+        collectionLat: parsedLat,
+        collectionLng: parsedLng,
         collectionDate: new Date(),
         farmerId: farmer.id,
       },
@@ -187,8 +234,8 @@ app.post("/batches", async (req, res) => {
           batchCode: batch.batchCode,
           herbSpecies: batch.herbSpecies,
           farmerId: farmer.id,
-          lat: Math.round(collectionLat * 1e6),
-          lng: Math.round(collectionLng * 1e6),
+          lat: Math.round(parsedLat * 1e6),
+          lng: Math.round(parsedLng * 1e6),
           collectionDate: Math.floor(batch.collectionDate.getTime() / 1000),
           ipfsCid: "", // real IPFS upload comes in Phase 5 — empty for now
           dataHash: ethers.ZeroHash, // placeholder until Phase 5 hashes real files
@@ -227,25 +274,46 @@ app.post("/batches", async (req, res) => {
   }
 });
 
+// Which roles are allowed to submit each stage — mirrors the logic that
+// used to live inside HerbBatch.sol's _actorAllowedForStage(), before we
+// moved trust to the backend under the Model A gas design
+const STAGE_ALLOWED_ROLES = {
+  AGGREGATED: ["AGGREGATOR"],
+  PROCESSED: ["PROCESSOR"],
+  LAB_TESTED: ["LAB"],
+  MANUFACTURED: ["MANUFACTURER"],
+  PACKAGED: ["MANUFACTURER"],
+  DISTRIBUTED: ["DISTRIBUTOR"],
+};
+
 // Append a lifecycle event to an existing batch (processed, tested, etc.)
 // — writes to Postgres AND records it on-chain, same pattern as POST /batches
-app.post("/batches/:id/events", async (req, res) => {
+app.post("/batches/:id/events", requireAuth, async (req, res) => {
   try {
-    const { stage, actorEmail, notes, latitude, longitude } = req.body;
+    const { stage, notes, latitude, longitude } = req.body;
 
     if (!(stage in STAGE_TO_CHAIN_INDEX)) {
       return res.status(400).json({ error: `Invalid stage. Must be one of: ${Object.keys(STAGE_TO_CHAIN_INDEX).join(", ")}` });
     }
 
+    const allowedRoles = STAGE_ALLOWED_ROLES[stage];
+    if (!allowedRoles || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: `Stage ${stage} requires role: ${allowedRoles ? allowedRoles.join(", ") : "none allowed"}` });
+    }
+
     const batch = await prisma.batch.findUnique({ where: { id: req.params.id } });
     if (!batch) return res.status(404).json({ error: "Batch not found" });
     if (batch.onChainId === null) {
-      // Can't append an on-chain event to a batch that was never confirmed on-chain
       return res.status(400).json({ error: "Batch has no on-chain record yet — cannot add an event" });
     }
 
-    const actor = await prisma.user.findUnique({ where: { email: actorEmail } });
-    if (!actor) return res.status(400).json({ error: "A valid registered actor is required" });
+    // actor identity comes from the verified JWT now, not the request body
+    const actor = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { id: true, isVerified: true },
+    });
+    if (!actor) return res.status(401).json({ error: "User no longer exists" });
+    if (!actor.isVerified) return res.status(403).json({ error: "Account is pending admin verification" });
 
     // 1. Write to Postgres first
     const event = await prisma.batchEvent.create({

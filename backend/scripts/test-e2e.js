@@ -41,6 +41,26 @@ async function runTests() {
     }
   }
 
+  // --- Auth: Log in as Farmer ---
+  console.log("--- 0. Authenticating as Farmer ---");
+  const loginRes = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: "/auth/login",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+    {
+      email: "ramesh.patil@example.com",
+      password: "Password123!",
+    }
+  );
+  assert(loginRes.statusCode === 200, `Farmer login succeeded (got ${loginRes.statusCode})`);
+  assert(Boolean(loginRes.data && loginRes.data.token), "Received JWT token");
+  const farmerToken = loginRes.data && loginRes.data.token;
+  console.log(`  -> Farmer authenticated, token acquired.\n`);
+
   // --- Test 1: POST /batches (Create Batch) ---
   console.log("--- 1. Testing POST /batches (Create Batch) ---");
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
@@ -52,7 +72,10 @@ async function runTests() {
       port: 4000,
       path: "/batches",
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${farmerToken}`,
+      },
     },
     {
       batchCode: testBatchCode,
@@ -60,7 +83,6 @@ async function runTests() {
       quantityKg: 35.5,
       collectionLat: 19.9975,
       collectionLng: 73.7898,
-      farmerEmail: "ramesh.patil@example.com",
     }
   );
 
@@ -163,6 +185,81 @@ async function runTests() {
     }
   );
   assert(invalidBatchRes.statusCode === 404, `Reject non-existent batch with 404 (got ${invalidBatchRes.statusCode})`);
+
+  // Unauthenticated batch creation (no token)
+  const unauthBatchRes = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: "/batches",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+    {
+      batchCode: "SNJ-TEST-UNAUTH",
+      herbSpecies: "Ashwagandha",
+      quantityKg: 10,
+      collectionLat: 20.0,
+      collectionLng: 73.0,
+    }
+  );
+  assert(unauthBatchRes.statusCode === 401, `Reject unauthenticated batch creation with 401 (got ${unauthBatchRes.statusCode})`);
+
+  // Processor attempting to create a batch (role check)
+  const procLoginRes = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: "/auth/login",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+    {
+      email: "processor@example.com",
+      password: "Password123!",
+    }
+  );
+  if (procLoginRes.statusCode === 200 && procLoginRes.data.token) {
+    const wrongRoleRes = await request(
+      {
+        hostname: "localhost",
+        port: 4000,
+        path: "/batches",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${procLoginRes.data.token}`,
+        },
+      },
+      {
+        batchCode: "SNJ-TEST-WRONG-ROLE",
+        herbSpecies: "Ashwagandha",
+        quantityKg: 10,
+        collectionLat: 20.0,
+        collectionLng: 73.0,
+      }
+    );
+    assert(wrongRoleRes.statusCode === 403, `Reject non-farmer batch creation with 403 (got ${wrongRoleRes.statusCode})`);
+  }
+
+  // Missing required batch fields
+  const missingFieldRes = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: "/batches",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${farmerToken}`,
+      },
+    },
+    {
+      batchCode: "SNJ-TEST-INCOMPLETE",
+      // missing herbSpecies, quantityKg, coordinates
+    }
+  );
+  assert(missingFieldRes.statusCode === 400, `Reject batch with missing required fields with 400 (got ${missingFieldRes.statusCode})`);
 
   console.log("\n==================================================");
   console.log(`  TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
