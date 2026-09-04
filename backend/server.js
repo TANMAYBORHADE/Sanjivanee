@@ -10,7 +10,7 @@ const { createBatchOnChain, addEventOnChain } = require("./src/blockchain/contra
 // Fail loudly at startup if required config is missing, instead of a
 // confusing crash the first time some route actually needs it
 function validateEnv() {
-  const required = ["DATABASE_URL", "RPC_URL", "BACKEND_WALLET_PRIVATE_KEY", "CONTRACT_ADDRESS"];
+  const required = ["DATABASE_URL", "RPC_URL", "BACKEND_WALLET_PRIVATE_KEY", "CONTRACT_ADDRESS", "JWT_SECRET"];
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length) {
     console.error(`Missing required environment variables: ${missing.join(", ")}`);
@@ -49,7 +49,7 @@ function requireAuth(req, res, next) {
 
   const token = authHeader.split(" ")[1];
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
     req.user = payload; // now every route below has access to req.user.userId and req.user.role
     next();
   } catch (err) {
@@ -78,6 +78,7 @@ const STAGE_TO_CHAIN_INDEX = {
   PACKAGED: 5,
   DISTRIBUTED: 6,
 };
+const VALID_STAGES = Object.keys(STAGE_TO_CHAIN_INDEX);
 
 // ---------- User Routes ----------
 
@@ -156,6 +157,17 @@ app.post("/auth/login", async (req, res) => {
 // Admin approves a user (farmer, lab, processor, etc.)
 app.patch("/users/:id/verify", requireAuth, requireRole("ADMIN"), async (req, res) => {
   try {
+    // Same re-check pattern used everywhere else — requireRole only proves
+    // the TOKEN says "admin"; this confirms the account is still real and
+    // still verified, so a revoked admin's old token can't keep working.
+    const callingAdmin = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { isVerified: true },
+    });
+    if (!callingAdmin || !callingAdmin.isVerified) {
+      return res.status(403).json({ error: "Admin account is not active" });
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: req.params.id },
       data: { isVerified: true },
@@ -193,11 +205,20 @@ app.post("/batches", requireAuth, requireRole("FARMER"), async (req, res) => {
     const parsedLat = parseFloat(collectionLat);
     const parsedLng = parseFloat(collectionLng);
 
-    if (isNaN(parsedQuantity) || isNaN(parsedLat) || isNaN(parsedLng)) {
-      return res.status(400).json({
-        error: "quantityKg, collectionLat, and collectionLng must be valid numbers",
-      });
-    }
+  if (isNaN(parsedQuantity) || isNaN(parsedLat) || isNaN(parsedLng)) {
+  return res.status(400).json({
+    error: "quantityKg, collectionLat, and collectionLng must be valid numbers",
+  });
+}
+if (parsedQuantity <= 0) {
+  return res.status(400).json({ error: "quantityKg must be greater than 0" });
+}
+if (parsedLat < -90 || parsedLat > 90) {
+  return res.status(400).json({ error: "collectionLat must be between -90 and 90" });
+}
+if (parsedLng < -180 || parsedLng > 180) {
+  return res.status(400).json({ error: "collectionLng must be between -180 and 180" });
+}
 
     // farmer identity comes from the verified JWT now, not the request body
     const farmer = await prisma.user.findUnique({
@@ -226,7 +247,6 @@ app.post("/batches", requireAuth, requireRole("FARMER"), async (req, res) => {
     });
 
     // 2. Record it on-chain — scale lat/lng by 1e6 since Solidity has no floats
-    // Wrapped in a retry since local/testnet RPC calls can fail transiently
     let onChainResult;
     try {
       onChainResult = await withRetry(() =>
@@ -274,9 +294,7 @@ app.post("/batches", requireAuth, requireRole("FARMER"), async (req, res) => {
   }
 });
 
-// Which roles are allowed to submit each stage — mirrors the logic that
-// used to live inside HerbBatch.sol's _actorAllowedForStage(), before we
-// moved trust to the backend under the Model A gas design
+// Which roles are allowed to submit each stage — mirrors the logic that used to live inside HerbBatch.sol's _actorAllowedForStage(), before we moved trust to the backend under the Model A gas design
 const STAGE_ALLOWED_ROLES = {
   AGGREGATED: ["AGGREGATOR"],
   PROCESSED: ["PROCESSOR"],
@@ -376,6 +394,9 @@ app.post("/batches/:id/events", requireAuth, async (req, res) => {
 app.get("/batches", async (req, res) => {
   try {
     const { herbSpecies, status, page = "1", limit = "20" } = req.query;
+    if (status && !VALID_STAGES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${VALID_STAGES.join(", ")}` });
+    }
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
@@ -415,13 +436,10 @@ app.get("/batches/:id", async (req, res) => {
           select: {
             id: true,
             name: true,
-            role: true,
-            email: true,
-            phone: true,
             orgName: true,
             region: true,
-            isVerified: true,
-            createdAt: true,
+            // email/phone/role/isVerified/createdAt deliberately excluded — this
+            // route has no auth requirement, so anyone can see this data
           },
         },
       },
