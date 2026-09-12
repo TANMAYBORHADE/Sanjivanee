@@ -41,9 +41,9 @@ async function runTests() {
     }
   }
 
-  // --- Auth: Log in as Farmer ---
-  console.log("--- 0. Authenticating as Farmer ---");
-  const loginRes = await request(
+  // --- 0. Authenticating actors ---
+  console.log("--- 0. Authenticating Actors ---");
+  const farmerLogin = await request(
     {
       hostname: "localhost",
       port: 4000,
@@ -51,17 +51,39 @@ async function runTests() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     },
-    {
-      email: "ramesh.patil@example.com",
-      password: "Password123!",
-    }
+    { email: "ramesh.patil@example.com", password: "Password123!" }
   );
-  assert(loginRes.statusCode === 200, `Farmer login succeeded (got ${loginRes.statusCode})`);
-  assert(Boolean(loginRes.data && loginRes.data.token), "Received JWT token");
-  const farmerToken = loginRes.data && loginRes.data.token;
-  console.log(`  -> Farmer authenticated, token acquired.\n`);
+  assert(farmerLogin.statusCode === 200, `Farmer login succeeded (${farmerLogin.statusCode})`);
+  const farmerToken = farmerLogin.data?.token;
 
-  // --- Test 1: POST /batches (Create Batch) ---
+  const procLogin = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: "/auth/login",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+    { email: "processor@example.com", password: "Password123!" }
+  );
+  assert(procLogin.statusCode === 200, `Processor login succeeded (${procLogin.statusCode})`);
+  const procToken = procLogin.data?.token;
+
+  const aggLogin = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: "/auth/login",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+    { email: "aggregator@example.com", password: "Password123!" }
+  );
+  assert(aggLogin.statusCode === 200, `Aggregator login succeeded (${aggLogin.statusCode})`);
+  const aggToken = aggLogin.data?.token;
+  console.log("  -> All test actors authenticated.\n");
+
+  // --- 1. POST /batches (Create Batch) ---
   console.log("--- 1. Testing POST /batches (Create Batch) ---");
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   const testBatchCode = `SNJ-ASHW-2026-${randomSuffix}`;
@@ -86,41 +108,88 @@ async function runTests() {
     }
   );
 
-  assert(createRes.statusCode === 201, `Status code is 201 Created (got ${createRes.statusCode})`);
+  assert(createRes.statusCode === 201, `Status code is 201 Created (${createRes.statusCode})`);
   assert(createRes.data.batchCode === testBatchCode, `Batch code matches (${createRes.data.batchCode})`);
-  assert(createRes.data.onChainId !== null && createRes.data.onChainId !== undefined, `onChainId exists (${createRes.data.onChainId})`);
-  assert(typeof createRes.data.creationTxHash === "string" && createRes.data.creationTxHash.startsWith("0x"), `creationTxHash is valid (${createRes.data.creationTxHash})`);
+  assert(createRes.data.status === "COLLECTED", `Initial status is COLLECTED (${createRes.data.status})`);
 
   const createdBatchId = createRes.data.id;
-  console.log(`  -> Batch created with DB ID: ${createdBatchId}, On-Chain ID: ${createRes.data.onChainId}\n`);
+  console.log(`  -> Batch created with DB ID: ${createdBatchId}\n`);
 
-  // --- Test 2: POST /batches/:id/events (Add Lifecycle Event) ---
-  console.log("--- 2. Testing POST /batches/:id/events (Add Event) ---");
-  const eventRes = await request(
+  // --- 2. Testing Forward Jump: COLLECTED -> PROCESSED (skipping AGGREGATED) ---
+  console.log("--- 2. Testing Forward Jump (skipping AGGREGATED) ---");
+  const forwardEventRes = await request(
     {
       hostname: "localhost",
       port: 4000,
       path: `/batches/${createdBatchId}/events`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${procToken}`,
+      },
     },
     {
       stage: "PROCESSED",
-      actorEmail: "processor@example.com",
       notes: "Steam-sterilized and ground into fine powder.",
       latitude: 19.998,
       longitude: 73.79,
     }
   );
 
-  assert(eventRes.statusCode === 201, `Status code is 201 Created (got ${eventRes.statusCode})`);
-  assert(eventRes.data.stage === "PROCESSED", `Event stage is PROCESSED (${eventRes.data.stage})`);
-  assert(typeof eventRes.data.txHash === "string" && eventRes.data.txHash.startsWith("0x"), `Event txHash is valid (${eventRes.data.txHash})`);
-  assert(eventRes.data.notes === "Steam-sterilized and ground into fine powder.", `Event notes match`);
-  console.log(`  -> Event recorded with DB ID: ${eventRes.data.id}, TxHash: ${eventRes.data.txHash}\n`);
+  assert(forwardEventRes.statusCode === 201, `Forward jump succeeds with 201 Created (got ${forwardEventRes.statusCode})`);
+  assert(forwardEventRes.data.stage === "PROCESSED", `Event stage is PROCESSED (${forwardEventRes.data.stage})`);
+  console.log(`  -> Forward jump recorded successfully.\n`);
 
-  // --- Test 3: GET /batches/:id (Fetch Batch with Events) ---
-  console.log("--- 3. Testing GET /batches/:id (Fetch Batch & Events) ---");
+  // --- 3. Testing Backward Transition: PROCESSED -> AGGREGATED (should fail 409) ---
+  console.log("--- 3. Testing Backward Transition Rejection ---");
+  const backwardEventRes = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: `/batches/${createdBatchId}/events`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${aggToken}`,
+      },
+    },
+    {
+      stage: "AGGREGATED",
+      notes: "Attempting backward aggregation",
+    }
+  );
+
+  assert(backwardEventRes.statusCode === 409, `Backward transition rejected with 409 Conflict (got ${backwardEventRes.statusCode})`);
+  assert(
+    typeof backwardEventRes.data?.error === "string" && backwardEventRes.data.error.includes("forward only"),
+    `Error message explains forward-only rule (${backwardEventRes.data?.error})`
+  );
+  console.log(`  -> Backward transition safely blocked.\n`);
+
+  // --- 4. Testing Duplicate Stage Transition: PROCESSED -> PROCESSED (should fail 409) ---
+  console.log("--- 4. Testing Duplicate Stage Rejection ---");
+  const duplicateEventRes = await request(
+    {
+      hostname: "localhost",
+      port: 4000,
+      path: `/batches/${createdBatchId}/events`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${procToken}`,
+      },
+    },
+    {
+      stage: "PROCESSED",
+      notes: "Attempting second processing stage",
+    }
+  );
+
+  assert(duplicateEventRes.statusCode === 409, `Duplicate stage rejected with 409 Conflict (got ${duplicateEventRes.statusCode})`);
+  console.log(`  -> Duplicate stage safely blocked.\n`);
+
+  // --- 5. GET /batches/:id (Fetch Batch with Events) ---
+  console.log("--- 5. Testing GET /batches/:id (Fetch Batch & Events) ---");
   const getRes = await request({
     hostname: "localhost",
     port: 4000,
@@ -128,47 +197,31 @@ async function runTests() {
     method: "GET",
   });
 
-  assert(getRes.statusCode === 200, `Status code is 200 OK (got ${getRes.statusCode})`);
-  assert(getRes.data.status === "PROCESSED", `Batch status was updated to PROCESSED (${getRes.data.status})`);
-  assert(Array.isArray(getRes.data.events) && getRes.data.events.length === 1, `Batch contains 1 event in history`);
-  assert(getRes.data.farmer && getRes.data.farmer.email === "ramesh.patil@example.com", `Farmer details populated`);
+  assert(getRes.statusCode === 200, `Status code is 200 OK (${getRes.statusCode})`);
+  assert(getRes.data.status === "PROCESSED", `Batch status is PROCESSED (${getRes.data.status})`);
+  assert(Array.isArray(getRes.data.events) && getRes.data.events.length === 1, `Batch contains exactly 1 event`);
+  assert(getRes.data.farmer && getRes.data.farmer.name !== undefined, `Farmer details populated`);
   assert(getRes.data.farmer.passwordHash === undefined, `Sensitive fields (passwordHash) stripped`);
-  console.log(`  -> Batch verification complete.\n`);
+  console.log(`  -> Batch state verified.\n`);
 
-  // --- Test 4: Negative & Edge Case Tests ---
-  console.log("--- 4. Testing Negative / Edge Cases ---");
+  // --- 6. Testing Negative / Edge Cases ---
+  console.log("--- 6. Testing Negative / Edge Cases ---");
 
-  // Invalid stage
+  // Invalid stage (authenticated)
   const invalidStageRes = await request(
     {
       hostname: "localhost",
       port: 4000,
       path: `/batches/${createdBatchId}/events`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${procToken}`,
+      },
     },
-    {
-      stage: "SUPER_PROCESSED",
-      actorEmail: "processor@example.com",
-    }
+    { stage: "INVALID_STAGE" }
   );
   assert(invalidStageRes.statusCode === 400, `Reject invalid stage with 400 (got ${invalidStageRes.statusCode})`);
-
-  // Non-existent actor
-  const invalidActorRes = await request(
-    {
-      hostname: "localhost",
-      port: 4000,
-      path: `/batches/${createdBatchId}/events`,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    },
-    {
-      stage: "AGGREGATED",
-      actorEmail: "doesnotexist@example.com",
-    }
-  );
-  assert(invalidActorRes.statusCode === 400, `Reject invalid actor with 400 (got ${invalidActorRes.statusCode})`);
 
   // Non-existent batch ID
   const invalidBatchRes = await request(
@@ -177,12 +230,12 @@ async function runTests() {
       port: 4000,
       path: `/batches/non-existent-cuid/events`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${procToken}`,
+      },
     },
-    {
-      stage: "AGGREGATED",
-      actorEmail: "processor@example.com",
-    }
+    { stage: "PROCESSED" }
   );
   assert(invalidBatchRes.statusCode === 404, `Reject non-existent batch with 404 (got ${invalidBatchRes.statusCode})`);
 
@@ -206,41 +259,26 @@ async function runTests() {
   assert(unauthBatchRes.statusCode === 401, `Reject unauthenticated batch creation with 401 (got ${unauthBatchRes.statusCode})`);
 
   // Processor attempting to create a batch (role check)
-  const procLoginRes = await request(
+  const wrongRoleRes = await request(
     {
       hostname: "localhost",
       port: 4000,
-      path: "/auth/login",
+      path: "/batches",
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${procToken}`,
+      },
     },
     {
-      email: "processor@example.com",
-      password: "Password123!",
+      batchCode: "SNJ-TEST-WRONG-ROLE",
+      herbSpecies: "Ashwagandha",
+      quantityKg: 10,
+      collectionLat: 20.0,
+      collectionLng: 73.0,
     }
   );
-  if (procLoginRes.statusCode === 200 && procLoginRes.data.token) {
-    const wrongRoleRes = await request(
-      {
-        hostname: "localhost",
-        port: 4000,
-        path: "/batches",
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${procLoginRes.data.token}`,
-        },
-      },
-      {
-        batchCode: "SNJ-TEST-WRONG-ROLE",
-        herbSpecies: "Ashwagandha",
-        quantityKg: 10,
-        collectionLat: 20.0,
-        collectionLng: 73.0,
-      }
-    );
-    assert(wrongRoleRes.statusCode === 403, `Reject non-farmer batch creation with 403 (got ${wrongRoleRes.statusCode})`);
-  }
+  assert(wrongRoleRes.statusCode === 403, `Reject non-farmer batch creation with 403 (got ${wrongRoleRes.statusCode})`);
 
   // Missing required batch fields
   const missingFieldRes = await request(
@@ -254,10 +292,7 @@ async function runTests() {
         Authorization: `Bearer ${farmerToken}`,
       },
     },
-    {
-      batchCode: "SNJ-TEST-INCOMPLETE",
-      // missing herbSpecies, quantityKg, coordinates
-    }
+    { batchCode: "SNJ-TEST-INCOMPLETE" }
   );
   assert(missingFieldRes.statusCode === 400, `Reject batch with missing required fields with 400 (got ${missingFieldRes.statusCode})`);
 

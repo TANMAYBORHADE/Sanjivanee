@@ -325,6 +325,15 @@ app.post("/batches/:id/events", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Batch has no on-chain record yet — cannot add an event" });
     }
 
+    // Enforce forward-only progression: stages must move forward (allows skipping stages, but rejects going backward or repeating)
+    const currentIndex = STAGE_TO_CHAIN_INDEX[batch.status];
+    const newIndex = STAGE_TO_CHAIN_INDEX[stage];
+    if (newIndex <= currentIndex) {
+      return res.status(409).json({
+        error: `Cannot move from ${batch.status} to ${stage} — stages must move forward only`,
+      });
+    }
+
     // actor identity comes from the verified JWT now, not the request body
     const actor = await prisma.user.findUnique({
       where: { id: req.user.userId },
