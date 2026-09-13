@@ -243,6 +243,7 @@ if (parsedLng < -180 || parsedLng > 180) {
         collectionLng: parsedLng,
         collectionDate: new Date(),
         farmerId: farmer.id,
+        currentCustodianId: farmer.id,
       },
     });
 
@@ -304,6 +305,45 @@ const STAGE_ALLOWED_ROLES = {
   DISTRIBUTED: ["DISTRIBUTOR"],
 };
 
+app.post("/batches/:id/transfer-custody", requireAuth, async (req, res) => {
+  try {
+    const { nextCustodianId } = req.body;
+    if (!nextCustodianId) {
+      return res.status(400).json({ error: "nextCustodianId is required" });
+    }
+
+    const batch = await prisma.batch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ error: "Batch not found" });
+
+    const actor = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { id: true, role: true },
+    });
+
+    if (batch.currentCustodianId !== actor.id && actor.role !== "ADMIN") {
+      return res.status(403).json({ error: "You are not the current custodian of this batch" });
+    }
+
+    const nextCustodian = await prisma.user.findUnique({
+      where: { id: nextCustodianId },
+      select: { id: true, isVerified: true },
+    });
+    if (!nextCustodian || !nextCustodian.isVerified) {
+      return res.status(400).json({ error: "nextCustodianId must be a valid, verified user" });
+    }
+
+    const updatedBatch = await prisma.batch.update({
+      where: { id: batch.id },
+      data: { currentCustodianId: nextCustodian.id },
+    });
+
+    res.json(updatedBatch);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
 // Append a lifecycle event to an existing batch (processed, tested, etc.)
 // — writes to Postgres AND records it on-chain, same pattern as POST /batches
 app.post("/batches/:id/events", requireAuth, async (req, res) => {
@@ -335,12 +375,21 @@ app.post("/batches/:id/events", requireAuth, async (req, res) => {
     }
 
     // actor identity comes from the verified JWT now, not the request body
-    const actor = await prisma.user.findUnique({
+
+     const actor = await prisma.user.findUnique({
       where: { id: req.user.userId },
-      select: { id: true, isVerified: true },
+      select: { id: true, isVerified: true, role: true },
     });
     if (!actor) return res.status(401).json({ error: "User no longer exists" });
     if (!actor.isVerified) return res.status(403).json({ error: "Account is pending admin verification" });
+
+    // Custody check: only whoever currently holds the batch (or an admin,
+    // for correcting mistakes) can advance it. This is what actually closes
+    // the BOLA finding — role alone used to be enough for ANY processor to
+    // touch ANY batch; now it has to be THIS specific batch's custodian.
+    if (batch.currentCustodianId !== actor.id && actor.role !== "ADMIN") {
+      return res.status(403).json({ error: "You are not the current custodian of this batch" });
+    }
 
     // 1. Write to Postgres first
     const event = await prisma.batchEvent.create({

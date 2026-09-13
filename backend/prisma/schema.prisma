@@ -35,6 +35,7 @@ model User {
   createdAt    DateTime @default(now())
 
   batchesCollected Batch[]        @relation("FarmerBatches")
+  batchesInCustody Batch[]        @relation("BatchCustodian")
   events           BatchEvent[]
   labCertificates  LabCertificate[]
 
@@ -61,8 +62,10 @@ model Batch {
   collectionLng  Float
   collectionDate DateTime
   harvestSeason  String?  // e.g. "post-monsoon" — relevant for seasonal restriction checks
-  farmerId       String
-  farmer         User     @relation("FarmerBatches", fields: [farmerId], references: [id])
+  farmerId           String
+  farmer             User     @relation("FarmerBatches", fields: [farmerId], references: [id])
+  currentCustodianId String
+  currentCustodian   User     @relation("BatchCustodian", fields: [currentCustodianId], references: [id])
 
   status         BatchStage @default(COLLECTED)
   onChainId      String?    // token/batch id returned by the smart contract
