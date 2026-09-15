@@ -413,13 +413,24 @@ app.post("/batches/:id/events", requireAuth, upload.single("report"), async (req
     let onChainResult = null;
     let chainWarning = null;
     try {
+      let ipfsCid = "";
+      let dataHash = ethers.ZeroHash;
+      let savedIpfsCid = null; 
+
+      if (req.file) {
+        const uploadResult = await uploadFileToIPFS(req.file.buffer, req.file.originalname, req.file.mimetype);
+        ipfsCid = uploadResult.ipfsCid;
+        dataHash = uploadResult.dataHash;
+        savedIpfsCid = uploadResult.ipfsCid;
+      }
+
       onChainResult = await withRetry(() =>
         addEventOnChain({
           onChainId: batch.onChainId,
           stage: STAGE_TO_CHAIN_INDEX[stage],
           actorId: actor.id,
-          ipfsCid: "",
-          dataHash: ethers.ZeroHash,
+          ipfsCid,
+          dataHash,
         })
       );
     } catch (chainErr) {
@@ -429,9 +440,12 @@ app.post("/batches/:id/events", requireAuth, upload.single("report"), async (req
 
     // 3. batch.status ALWAYS reflects what really happened, regardless of chain-write success. txHash is only set if the chain call succeeded.
     const [updatedEvent] = await prisma.$transaction([
-      prisma.batchEvent.update({
+          prisma.batchEvent.update({
         where: { id: event.id },
-        data: onChainResult ? { txHash: onChainResult.txHash } : {},
+        data: {
+          ...(onChainResult ? { txHash: onChainResult.txHash } : {}),
+          ...(savedIpfsCid ? { ipfsCid: savedIpfsCid } : {}),
+        },
       }),
       prisma.batch.update({
         where: { id: batch.id },
