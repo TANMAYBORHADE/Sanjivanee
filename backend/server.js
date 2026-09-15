@@ -6,6 +6,9 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { prisma } = require("./prisma/client");
 const { createBatchOnChain, addEventOnChain } = require("./src/blockchain/contract");
+const multer = require("multer");
+const { uploadFileToIPFS } = require("./src/ipfs/upload");
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); 
 
 // Fail loudly at startup if required config is missing, instead of a
 // confusing crash the first time some route actually needs it
@@ -346,8 +349,8 @@ app.post("/batches/:id/transfer-custody", requireAuth, async (req, res) => {
 
 // Append a lifecycle event to an existing batch (processed, tested, etc.)
 // — writes to Postgres AND records it on-chain, same pattern as POST /batches
-app.post("/batches/:id/events", requireAuth, async (req, res) => {
-  try {
+app.post("/batches/:id/events", requireAuth, upload.single("report"), async (req, res) => {
+    try {
     const { stage, notes, latitude, longitude } = req.body;
 
     if (!(stage in STAGE_TO_CHAIN_INDEX)) {
@@ -424,8 +427,7 @@ app.post("/batches/:id/events", requireAuth, async (req, res) => {
       chainWarning = "Saved to database, but blockchain recording failed. Event's txHash remains null until manually synced.";
     }
 
-    // 3. batch.status ALWAYS reflects what really happened, regardless of
-    // chain-write success. txHash is only set if the chain call succeeded.
+    // 3. batch.status ALWAYS reflects what really happened, regardless of chain-write success. txHash is only set if the chain call succeeded.
     const [updatedEvent] = await prisma.$transaction([
       prisma.batchEvent.update({
         where: { id: event.id },
