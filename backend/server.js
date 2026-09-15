@@ -412,11 +412,10 @@ app.post("/batches/:id/events", requireAuth, upload.single("report"), async (req
     // don't need a separate status field for this.
     let onChainResult = null;
     let chainWarning = null;
+    let ipfsCid = "";
+    let dataHash = ethers.ZeroHash;
+    let savedIpfsCid = null;
     try {
-      let ipfsCid = "";
-      let dataHash = ethers.ZeroHash;
-      let savedIpfsCid = null; 
-
       if (req.file) {
         const uploadResult = await uploadFileToIPFS(req.file.buffer, req.file.originalname, req.file.mimetype);
         ipfsCid = uploadResult.ipfsCid;
