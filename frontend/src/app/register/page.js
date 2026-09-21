@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { apiFetch } from "../../lib/api";
+import { apiFetch } from "../../../lib/api";
 
 // Matches SELF_REGISTERABLE_ROLES in server.js exactly — admin accounts
 // are never created through open registration, only via the backend's

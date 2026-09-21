@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { apiFetch, saveSession } from "../../lib/api";
+import { apiFetch, saveSession } from "../../../lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
