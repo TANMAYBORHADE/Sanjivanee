@@ -9,6 +9,8 @@ const { createBatchOnChain, addEventOnChain } = require("./src/blockchain/contra
 const multer = require("multer");
 const { uploadFileToIPFS } = require("./src/ipfs/upload");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); 
+const { OAuth2Client } = require("google-auth-library");
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Fail loudly at startup if required config is missing, instead of a
 // confusing crash the first time some route actually needs it
