@@ -61,4 +61,6 @@ async function addEventOnChain({ onChainId, stage, actorId, ipfsCid, dataHash })
   return { txHash: receipt.hash };
 }
 
+
+
 module.exports = { createBatchOnChain, addEventOnChain };

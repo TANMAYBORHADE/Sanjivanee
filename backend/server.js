@@ -348,6 +348,48 @@ app.post("/batches/:id/transfer-custody", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Something went wrong" });
   }
 });
+// Google sign-in — farmers only. Looks up or creates a FARMER account from
+// a verified Google identity, then issues the SAME kind of JWT as normal
+// login. Nothing downstream (requireAuth, requireRole, custody checks)
+// changes — it never knows or cares how the JWT was obtained.
+app.post("/auth/google", async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken) return res.status(400).json({ error: "idToken is required" });
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload(); // { email, name, ... } — verified by Google, not client-supplied
+
+    let user = await prisma.user.findUnique({ where: { email: payload.email } });
+
+    if (user && user.role !== "FARMER") {
+      // Someone with this email already exists as a different role (e.g. a
+      // lab that also has a Gmail). Google login is farmer-only, so refuse
+      // rather than silently logging them in as the wrong role.
+      return res.status(403).json({ error: "This email is registered as a different role. Use email/password login." });
+    }
+
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          name: payload.name || payload.email,
+          email: payload.email,
+          role: "FARMER",
+          passwordHash: "GOOGLE_AUTH_NO_PASSWORD", // never used — bcrypt.compare will just always fail on it, which is fine, login goes through this route instead
+        },
+      });
+    }
+
+    const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  } catch (err) {
+    console.error(err);
+    res.status(401).json({ error: "Google sign-in failed" });
+  }
+});
 
 // Append a lifecycle event to an existing batch (processed, tested, etc.)
 // — writes to Postgres AND records it on-chain, same pattern as POST /batches
