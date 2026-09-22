@@ -11,6 +11,7 @@ const { uploadFileToIPFS } = require("./src/ipfs/upload");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); 
 const { OAuth2Client } = require("google-auth-library");
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const rateLimit = require("express-rate-limit");
 
 // Fail loudly at startup if required config is missing, instead of a
 // confusing crash the first time some route actually needs it
@@ -27,6 +28,24 @@ validateEnv();
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "100kb" }));
+
+// 5 attempts per 15 minutes per IP — blocks brute-force password guessing
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: "Too many login attempts. Try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Looser limit on registration — mainly to slow down automated account spam
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many accounts created from this network. Try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Retries a flaky async operation (like a blockchain call) a few times
 // before giving up — local nodes/networks can hiccup transiently
