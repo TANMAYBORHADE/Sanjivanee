@@ -108,7 +108,7 @@ const VALID_STAGES = Object.keys(STAGE_TO_CHAIN_INDEX);
 
 const SELF_REGISTERABLE_ROLES = ["FARMER", "AGGREGATOR", "PROCESSOR", "LAB", "MANUFACTURER", "DISTRIBUTOR"];
 
-app.post("/users", async (req, res) => {
+app.post("/users",loginLimiter , async (req, res) => {
   try {
     const { name, email, password, role, phone, orgName, region } = req.body;
 
@@ -147,7 +147,7 @@ app.post("/users", async (req, res) => {
   }
 });
 
-app.post("/auth/login", async (req, res) => {
+app.post("/auth/login", loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
