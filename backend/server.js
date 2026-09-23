@@ -177,7 +177,26 @@ app.post("/auth/login", loginLimiter, async (req, res) => {
     res.status(500).json({ error: "Something went wrong" });
   }
 });
+app.get("/users", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  try {
+    const { verified } = req.query; // optional: "true" or "false" to filter
+    const where = verified === "false" ? { isVerified: false } : verified === "true" ? { isVerified: true } : {};
 
+    const users = await prisma.user.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, name: true, email: true, role: true, orgName: true,
+        region: true, isVerified: true, createdAt: true,
+        // passwordHash deliberately excluded, same pattern as every other route
+      },
+    });
+    res.json(users);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
 // Admin approves a user (farmer, lab, processor, etc.)
 app.patch("/users/:id/verify", requireAuth, requireRole("ADMIN"), async (req, res) => {
   try {
