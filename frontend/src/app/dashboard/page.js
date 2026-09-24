@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getUser, getToken, clearSession } from "../../lib/api";
+import { getUser, getToken, clearSession } from "../../../lib/api";   
 import AdminDashboard from "./AdminDashboard";
 
 export default function DashboardPage() {
