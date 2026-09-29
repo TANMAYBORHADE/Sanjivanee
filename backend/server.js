@@ -233,6 +233,49 @@ app.patch("/users/:id/verify", requireAuth, requireRole("ADMIN"), async (req, re
 });
 
 // ---------- Batch Routes ----------
+
+// Full list of every batch, for admin supervision (not the public one — this
+// one shows more, since the caller is authenticated and trusted as ADMIN)
+app.get("/admin/batches", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  try {
+    const batches = await prisma.batch.findMany({
+      orderBy: { updatedAt: "desc" },
+      include: {
+        farmer: { select: { id: true, name: true, email: true, region: true } },
+        currentCustodian: { select: { id: true, name: true, role: true } },
+      },
+    });
+    res.json(batches);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+// Full detail on one batch — every event, every actor's identity, every
+// IPFS file and tx hash. Admin-only precisely because it's more revealing
+// than the public verify view.
+app.get("/admin/batches/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  try {
+    const batch = await prisma.batch.findUnique({
+      where: { id: req.params.id },
+      include: {
+        farmer: { select: { id: true, name: true, email: true, phone: true, orgName: true, region: true } },
+        currentCustodian: { select: { id: true, name: true, email: true, role: true } },
+        events: {
+          orderBy: { occurredAt: "asc" },
+          include: { actor: { select: { name: true, email: true, role: true, orgName: true } } },
+        },
+      },
+    });
+    if (!batch) return res.status(404).json({ error: "Batch not found" });
+    res.json(batch);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
 app.get("/my-batches", requireAuth, async (req, res) => {
   try {
     const batches = await prisma.batch.findMany({
