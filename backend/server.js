@@ -264,7 +264,10 @@ app.get("/admin/batches/:id", requireAuth, requireRole("ADMIN"), async (req, res
         currentCustodian: { select: { id: true, name: true, email: true, role: true } },
         events: {
           orderBy: { occurredAt: "asc" },
-          include: { actor: { select: { name: true, email: true, role: true, orgName: true } } },
+          include: {
+            actor: { select: { name: true, email: true, role: true, orgName: true } },
+            labCertificate: true,
+          },
         },
       },
     });
