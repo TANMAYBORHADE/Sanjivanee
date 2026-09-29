@@ -233,7 +233,24 @@ app.patch("/users/:id/verify", requireAuth, requireRole("ADMIN"), async (req, re
 });
 
 // ---------- Batch Routes ----------
-
+app.get("/my-batches", requireAuth, async (req, res) => {
+  try {
+    const batches = await prisma.batch.findMany({
+      where: {
+        OR: [{ farmerId: req.user.userId }, { currentCustodianId: req.user.userId }],
+      },
+      orderBy: { updatedAt: "desc" },
+      include: {
+        farmer: { select: { id: true, name: true } },
+        currentCustodian: { select: { id: true, name: true, role: true } },
+      },
+    });
+    res.json(batches);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
 app.post("/batches", requireAuth, requireRole("FARMER"), async (req, res) => {
   try {
     const { batchCode, herbSpecies, quantityKg, collectionLat, collectionLng } = req.body;
