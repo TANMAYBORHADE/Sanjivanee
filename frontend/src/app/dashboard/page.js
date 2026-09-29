@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getUser, getToken, clearSession } from "../../../lib/api";   
+import { getUser, getToken, clearSession } from "../../../lib/api";
 import AdminDashboard from "./AdminDashboard";
+import FarmerDashboard from "./FarmerDashboard";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -24,7 +25,7 @@ export default function DashboardPage() {
     router.push("/login");
   }
 
-  if (!checked) return null; // avoids a flash of content before the auth check finishes
+  if (!checked) return null;
 
   return (
     <section>
@@ -38,8 +39,9 @@ export default function DashboardPage() {
         </div>
 
         {user?.role === "ADMIN" && <AdminDashboard />}
+        {user?.role === "FARMER" && <FarmerDashboard />}
 
-        {user?.role !== "ADMIN" && (
+        {user?.role !== "ADMIN" && user?.role !== "FARMER" && (
           <div className="pane on">
             <div className="panehead"><i className="d" /><i className="d" /><i className="d" /><span>{user?.role} dashboard</span></div>
             <div className="panebody" style={{ gridTemplateColumns: "1fr" }}>
