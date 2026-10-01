@@ -326,6 +326,26 @@ if (parsedLng < -180 || parsedLng > 180) {
   return res.status(400).json({ error: "collectionLng must be between -180 and 180" });
 }
 
+// Any authenticated actor can look up verified users of a given role, so
+// they know who to transfer custody to next. Deliberately minimal fields —
+// no email/phone — this isn't the admin's full view, just enough to pick
+// a recipient.
+app.get("/actors", requireAuth, async (req, res) => {
+  try {
+    const { role } = req.query;
+    if (!role) return res.status(400).json({ error: "role query param is required" });
+
+    const actors = await prisma.user.findMany({
+      where: { role, isVerified: true },
+      select: { id: true, name: true, orgName: true, region: true },
+    });
+    res.json(actors);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
     // farmer identity comes from the verified JWT now, not the request body
     const farmer = await prisma.user.findUnique({
       where: { id: req.user.userId },
