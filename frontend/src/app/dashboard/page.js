@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { getUser, getToken, clearSession } from "../../../lib/api";
 import AdminDashboard from "./AdminDashboard";
 import FarmerDashboard from "./FarmerDashboard";
+import ActorDashboard from "./ActorDashboard";
+
+const ACTOR_ROLES = ["AGGREGATOR", "PROCESSOR", "LAB", "MANUFACTURER", "DISTRIBUTOR"];
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -40,17 +43,7 @@ export default function DashboardPage() {
 
         {user?.role === "ADMIN" && <AdminDashboard />}
         {user?.role === "FARMER" && <FarmerDashboard />}
-
-        {user?.role !== "ADMIN" && user?.role !== "FARMER" && (
-          <div className="pane on">
-            <div className="panehead"><i className="d" /><i className="d" /><i className="d" /><span>{user?.role} dashboard</span></div>
-            <div className="panebody" style={{ gridTemplateColumns: "1fr" }}>
-              <p style={{ color: "var(--sage)" }}>
-                This view is being built next. Your account role is <b style={{ color: "var(--bone)" }}>{user?.role}</b>.
-              </p>
-            </div>
-          </div>
-        )}
+        {ACTOR_ROLES.includes(user?.role) && <ActorDashboard />}
       </div>
     </section>
   );
