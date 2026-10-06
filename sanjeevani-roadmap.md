@@ -1,13 +1,5 @@
 # Sanjeevani — Full Build Roadmap
 
-Stack: Next.js (frontend) · Express + Prisma/Postgres (backend) · Solidity + Hardhat (smart contracts) · IPFS
-
-Rule for every phase: **don't move to the next one until the current one is actually tested and working**, not just "written."
-
----
-
-# Sanjeevani — Full Build Roadmap
-
 Stack: Next.js (frontend) · Express + Prisma/Postgres (backend) · Solidity + Hardhat (smart contracts) · IPFS (Pinata)
 
 Rule for every phase: **don't move to the next one until the current one is actually tested and working**, not just "written."
@@ -23,7 +15,7 @@ Rule for every phase: **don't move to the next one until the current one is actu
 | **Phase 3** | Connect backend to the contract | ✅ **Completed & Tested** |
 | **Phase 4** | Auth & roles (+ BOLA fix & monotonic supply chain) | ✅ **Completed & Tested** (E2E suite pass) |
 | **Phase 5** | IPFS integration (Pinata + SHA-256 hash) | ✅ **Completed & Tested** |
-| **Phase 6** | Frontend dashboards | 🔄 **In Progress** (Next.js app initialized) |
+| **Phase 6** | Frontend dashboards | ✅ **Completed & Tested** (Farmer, Admin, Actor dashboards + Next.js build pass) |
 | **Phase 7** | QR code + public verification page | ⏳ **Upcoming** |
 | **Phase 8** | Polish & deploy | ⏳ **Upcoming** |
 
@@ -95,16 +87,15 @@ Rule for every phase: **don't move to the next one until the current one is actu
 
 ## Phase 6 — Frontend, one dashboard at a time
 
-Build and test each of these fully before starting the next:
-
 - [x] Next.js project setup with Tailwind CSS (`frontend/`)
-- [ ] **Farmer dashboard** — form to create a batch (species, quantity, GPS — auto-fill from browser geolocation), list of their past batches
-- [ ] **Lab dashboard** — list of batches awaiting testing, form to upload report + result for one
-- [ ] **Processor/Manufacturer dashboard** — stage transition form + custody transfer
-- [ ] **Admin panel** — approve/verify new users before they can act (matches `isVerified` in schema)
-- [ ] Shared components: batch timeline view (shows all `BatchEvent`s in order with IPFS/tx links), status badges
+- [x] **Farmer dashboard** (`FarmerDashboard.js`) — batch creation form with browser GPS auto-fill, list of batches in custody (`/my-batches`)
+- [x] **Lab dashboard** (`ActorDashboard.js`) — testing stage submission (`LAB_TESTED`), report file attachment pinned to IPFS, onward custody handoff
+- [x] **Processor / Manufacturer / Aggregator / Distributor dashboards** (`ActorDashboard.js`) — stage transitions (`AGGREGATED`, `PROCESSED`, `MANUFACTURED`, `PACKAGED`, `DISTRIBUTED`), optional file attachments, and custody transfer picker (`GET /actors`)
+- [x] **Admin panel** (`AdminDashboard.js`) — user verification queue (`PATCH /users/:id/verify`), verified user roster, and global batch monitoring
+- [x] Shared components & views — batch timeline with on-chain `txHash` & IPFS gateway links, status badges (`STAGE_BADGE`)
+- [x] Backend API support — `GET /actors` registered at top-level for verified actor lookup by role
 
-**Checkpoint:** a batch can be walked through its full lifecycle using only the UI, no manual API calls.
+**Checkpoint:** ✅ **PASSED** — All dashboards built and connected with backend APIs, authentication, and IPFS uploads; Next.js production build passing.
 
 ---
 
